@@ -1,0 +1,5 @@
+dependencies:
+  idf: '>=4.4'
+description: ENC28J60 SPI Ethernet Driver
+url: https://github.com/espressif/esp-eth-drivers/tree/master/enc28j60
+version: 1.0.0

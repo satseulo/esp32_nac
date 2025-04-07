@@ -1,0 +1,12 @@
+{
+    "files.associations": {
+        "sdkconfig.h": "c",
+        "cstdlib": "c",
+        "internet": "cpp",
+        "netfwd": "cpp",
+        "cstdint": "cpp",
+        "nac.h": "c"
+    },
+    "idf.portWin": "COM3",
+    "idf.flashType": "UART"
+}
