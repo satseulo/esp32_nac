@@ -21,38 +21,26 @@
 #include "main.h"
 
 static const char *TAG = "ENC28J60";
-#define SCAN_BUTTON GPIO_NUM_19
-#define BLOCK_BUTTON GPIO_NUM_18
 #define LED_PIN GPIO_NUM_2
+#define SCAN_BUTTON GPIO_NUM_5
+#define BLOCK_BUTTON GPIO_NUM_25
 
 esp_netif_t *eth_netif = NULL;
 esp_eth_handle_t eth_handle = NULL;
-TaskHandle_t NAC_handle = NULL;
-QueueHandle_t myQueue; 
+TaskHandle_t NAC_button_handle = NULL;
+QueueHandle_t my_button_Queue, arp_queue; 
 
 bool led_state = false;
- 
-void NAC_task(void *arg)
-{
-    gpio_num_t gpio_num;
-    while(1){
-        if(xQueueReceive(myQueue, &gpio_num, portMAX_DELAY)){
-            if (gpio_num == 19){
-                my_nac_arp_scan(eth_netif);
-            }
-            else if(gpio_num == 18){
-                //my_nac_arp_block(eth_netif, target_mac, target_ip, block_mac, block_ip);// chưa tét
-            }
-        }
-        gpio_set_level(LED_PIN, led_state);
-    }
-}
+const uint8_t ENC28J60_MAC_ADDR[6] = { 0x02, 0x00, 0x00, 0x12, 0x34, 0x56 };
+const esp_ip4_addr_t ESP32_IP       = { .addr = ESP_IP4TOADDR(192, 168, 0, 160) };
+const esp_ip4_addr_t ESP32_GATEWAY  = { .addr = ESP_IP4TOADDR(192, 168, 0, 1) };
+const esp_ip4_addr_t ESP32_NETMASK  = { .addr = ESP_IP4TOADDR(255, 255, 255, 0) };
  
 static void IRAM_ATTR gpio_isr_handler(void* arg)
 {
     gpio_num_t gpio_num = (gpio_num_t)arg;  // Lấy mã số chân GPIO từ đối số
     led_state = !led_state;  // Chuyển đổi trạng thái LED
-    xQueueSendFromISR(myQueue, &gpio_num, NULL);  //gửi vào queue: trong queue lưu gpio_num
+    xQueueSendFromISR(my_button_Queue, &gpio_num, NULL);  //gửi vào queue: trong queue lưu gpio_num
 }
 
 void app_main(void)
@@ -82,8 +70,8 @@ void app_main(void)
     gpio_config(&led_io);
 
     ESP_ERROR_CHECK(gpio_install_isr_service(0));  // bật trình xử lý ngắt
-    gpio_isr_handler_add(SCAN_BUTTON, gpio_isr_handler, (void*)SCAN_BUTTON);//tham số đầu viết số chân cho tk gpio_isr_handler_add, mỗi gpio 1 hàm
-    gpio_isr_handler_add(BLOCK_BUTTON, gpio_isr_handler, (void*)BLOCK_BUTTON);//tham só cuối cho phép truyền vào trong hàm
+    gpio_isr_handler_add(SCAN_BUTTON, gpio_isr_handler, (void *)SCAN_BUTTON);//tham số đầu viết số chân cho tk gpio_isr_handler_add, mỗi gpio 1 hàm
+    gpio_isr_handler_add(BLOCK_BUTTON, gpio_isr_handler, (void *)BLOCK_BUTTON);//tham só cuối cho phép truyền vào trong hàm
     gpio_intr_enable(SCAN_BUTTON);    /* Enable the Interrupt */
     gpio_intr_enable(BLOCK_BUTTON);    /* Enable the Interrupt */
 
@@ -104,9 +92,9 @@ void app_main(void)
 
     // khởi tạo ip tĩnh
     esp_netif_ip_info_t ip_info;
-    IP4_ADDR(&ip_info.ip, 192, 168, 0, 160);  //ip của esp32
-    IP4_ADDR(&ip_info.gw, 192, 168, 0, 1);    // ip của gateway(bộ định tuyến: router hoặc switch)
-    IP4_ADDR(&ip_info.netmask, 255, 255, 255, 0);  //subnetmask
+    ip_info.ip      = ESP32_IP;
+    ip_info.gw      = ESP32_GATEWAY;
+    ip_info.netmask = ESP32_NETMASK;
     ESP_ERROR_CHECK(esp_netif_dhcpc_stop(eth_netif)); // chặn hoạt động của DHCP==> không cho cấp phát động. DHCP do lwip chạy
     ESP_ERROR_CHECK(esp_netif_set_ip_info(eth_netif, &ip_info));// gắn thông tin ip vào netif
 
@@ -114,8 +102,18 @@ void app_main(void)
     setup_ethernet_hook();
 
     // tạo tất cả mọi thứ xong đến tạo queue xong đến tạo task==> xử lý xong hết khởi tạo rồi mới chạy
-    myQueue = xQueueCreate(3, sizeof(gpio_num_t));  // gán handle vào giá trị 1 hàm==> thực chất là đã có handle rồi
-    xTaskCreatePinnedToCore(NAC_task, "NAC", 4096, NULL, 10, &NAC_handle, 0);  // Core 0// bước tạo task để task kiểm tra queue
+    my_button_Queue = xQueueCreate(3, sizeof(gpio_num_t));  // gán handle vào giá trị 1 hàm==> thực chất là đã có handle rồi
+    xTaskCreatePinnedToCore(NAC_button_task, "NAC", 4096, NULL, 10, &NAC_button_handle, 0);  // Core 0// bước tạo task để task kiểm tra queue
+
+    // Khởi tạo queue
+    arp_queue = xQueueCreate(ARP_QUEUE_SIZE, sizeof(arp_packet_info_t));// queue của nac// arp_queue
+    if (arp_queue == NULL) {
+        ESP_LOGE(TAG, "Không thể tạo hàng đợi ARP");
+    } else {
+        xTaskCreate(my_arp_sender_task, "arp_sender_task", 4096, NULL, 5, NULL);
+        ESP_LOGI(TAG, "Tạo task gửi ARP OK");
+    }
+
 }
 
 static void enc28j60_init()
@@ -198,3 +196,41 @@ static void got_ip_event_handler(void *arg, esp_event_base_t event_base, int32_t
     ESP_LOGI(TAG, "Ethernet Got IP Address");// báo gắn được ip
     ESP_LOGI(TAG, "ETHIP:" IPSTR, IP2STR(&ip_info->ip));
 }
+
+static void my_arp_sender_task(void *arg)
+{
+    arp_packet_info_t pkt;
+
+    while (1) {
+        if (xQueueReceive(arp_queue, &pkt, portMAX_DELAY) == pdTRUE) {
+            my_copy_etharp_raw(
+                pkt.netif,
+                &pkt.ethsrc,
+                &pkt.ethdst,
+                &pkt.hwsrc,
+                &pkt.ipsrc,
+                &pkt.hwdst,
+                &pkt.ipdst,
+                pkt.opcode
+            );
+            vTaskDelay(pdMS_TO_TICKS(10));  // tránh nghẽn ENC28J60
+        }
+    }
+}
+
+void NAC_button_task(void *arg)
+{
+    gpio_num_t gpio_num;
+    while(1){
+        if(xQueueReceive(my_button_Queue, &gpio_num, portMAX_DELAY)){
+            if (gpio_num == BLOCK_BUTTON){
+                my_nac_arp_scan(eth_netif);
+            }
+            else if(gpio_num == SCAN_BUTTON){
+                my_arp_table_print();
+            }
+        }
+        gpio_set_level(LED_PIN, led_state);
+    }
+}
+ 

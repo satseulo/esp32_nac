@@ -5,7 +5,8 @@
         "internet": "cpp",
         "netfwd": "cpp",
         "cstdint": "cpp",
-        "nac.h": "c"
+        "nac.h": "c",
+        "compare": "c"
     },
     "idf.portWin": "COM3",
     "idf.flashType": "UART"
