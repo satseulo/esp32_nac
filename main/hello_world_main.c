@@ -35,7 +35,7 @@ const uint8_t ENC28J60_MAC_ADDR[6] = { 0x02, 0x00, 0x00, 0x12, 0x34, 0x56 };
 const esp_ip4_addr_t ESP32_IP       = { .addr = ESP_IP4TOADDR(192, 168, 0, 160) };
 const esp_ip4_addr_t ESP32_GATEWAY  = { .addr = ESP_IP4TOADDR(192, 168, 0, 1) };
 const esp_ip4_addr_t ESP32_NETMASK  = { .addr = ESP_IP4TOADDR(255, 255, 255, 0) };
- 
+const esp_ip4_addr_t ESP32_HONEYPOT  = { .addr = ESP_IP4TOADDR(192, 168, 0 ,220) };
 static void IRAM_ATTR gpio_isr_handler(void* arg)
 {
     gpio_num_t gpio_num = (gpio_num_t)arg;  // Lấy mã số chân GPIO từ đối số

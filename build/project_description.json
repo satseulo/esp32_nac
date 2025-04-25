@@ -1,7 +1,7 @@
 {
     "version":            "1.1",
     "project_name":       "hello_world",
-    "project_version":    "4974076-dirty",
+    "project_version":    "2b044e5-dirty",
     "project_path":       "E:/thangthehacker/idf/test/hello_world",
     "idf_path":           "D:/idf/esp_idf/v5.4/esp-idf",
     "build_dir":          "E:/thangthehacker/idf/test/hello_world/build",

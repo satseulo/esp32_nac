@@ -15,6 +15,7 @@ extern const uint8_t ENC28J60_MAC_ADDR[6];
 extern const esp_ip4_addr_t ESP32_IP;
 extern const esp_ip4_addr_t ESP32_GATEWAY;
 extern const esp_ip4_addr_t ESP32_NETMASK;
+extern const esp_ip4_addr_t ESP32_HONEYPOT;
 extern struct eth_addr mac_boardcast;
 extern struct eth_addr mac_unknown;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

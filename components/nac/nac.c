@@ -235,6 +235,14 @@ void my_etharp_input(struct pbuf *p, struct netif *netif)
                 if(add_arp_request_count(index)> ARP_SCAN_DETECT)
                 {
                     my_nac_arp_block(eth_netif, my_arp_table[index].mac, my_arp_table[index].ip);
+                    break;
+                }
+                ip4_addr_t honeypot_ip;
+                ip4_addr_set(&honeypot_ip, (const ip4_addr_t *)&ESP32_HONEYPOT);
+                if(ip4_addr_cmp(&honeypot_ip, &dipaddr))
+                {
+                    my_nac_arp_block(eth_netif, my_arp_table[index].mac, my_arp_table[index].ip);
+                    break;
                 }
 
                 ESP_LOGI(TAG, "send arp to blocked");
