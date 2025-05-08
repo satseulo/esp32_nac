@@ -89,31 +89,49 @@ void setup_ethernet_hook()
 //gọi hàm my_check_if_arp, return về xử lý lwip cũng ở hàm này
 err_t my_ethernet_input(struct pbuf *p, struct netif *netif)
 {
-    // tạo thêm 1 struct để xử lý code của nac, struct, struct gốc để lwip xử lý
-    struct pbuf *local_p;   // Khai báo con trỏ mới để chứa sao chép pbuf
-    // Tạo bản sao của pbuf mới
-    local_p = pbuf_alloc(PBUF_RAW, p->len, PBUF_POOL);
-    if (local_p == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate memory for pbuf");
-        return ERR_MEM;
+    struct eth_hdr *ethhdr;
+    u16_t type;
+
+    if (p->len <= SIZEOF_ETH_HDR) {
+        return ethernet_input(p, netif);
     }
 
-    // Sao chép dữ liệu từ pbuf gốc vào bản sao
-    if (pbuf_copy(local_p, p) != ERR_OK) {
-        ESP_LOGE(TAG, "Failed to copy pbuf data");
-        pbuf_free(local_p);
-        return ERR_MEM;
+    ethhdr = (struct eth_hdr *)p->payload;
+    type = ethhdr->type;
+
+    if (type == PP_HTONS(ETHTYPE_ARP)) {
+        if (!(netif->flags & NETIF_FLAG_ETHARP)) {
+            return ethernet_input(p, netif);  // không xử lý, cứ đẩy tiếp
+        }
+
+        // Tạo bản sao trước, KHÔNG chỉnh sửa `p`
+        struct pbuf *local_p = pbuf_alloc(PBUF_RAW, p->tot_len, PBUF_POOL);
+        if (local_p == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate memory for pbuf");
+            return ERR_MEM;
+        }
+
+        if (pbuf_copy(local_p, p) != ERR_OK) {
+            ESP_LOGE(TAG, "Failed to copy pbuf data");
+            pbuf_free(local_p);
+            return ERR_MEM;
+        }
+
+        // Remove header trên bản sao
+        if (pbuf_remove_header(local_p, SIZEOF_ETH_HDR)) {
+            pbuf_free(local_p);
+        } else {
+            my_etharp_input(local_p, netif);// xóa pbuf ở trong này rồi, không được gọi lại
+        }
     }
 
+    // Bản gốc vẫn giữ nguyên cho LWIP xử lý
     err_t err = ethernet_input(p, netif);
     if (err != ERR_OK) {
         ESP_LOGE(TAG, "ethernet_input failed");
-        pbuf_free(local_p);
-        return err;
     }
-    
-    my_check_if_arp(local_p,netif);//thêm hàm check if arp
-    return ERR_OK;  // sau khi xử lý xong việc của mình, móc tiếp lại cho lwip xử lý
+
+    return err;
 }
 //kiểm tra nếu là arp thì gọi tiếp hàm my_etharp_input
 err_t my_check_if_arp(struct pbuf *p, struct netif *netif)
@@ -325,7 +343,7 @@ void my_etharp_input(struct pbuf *p, struct netif *netif)
         {
             // trường hợp 1 thằng gửi request bị trùng ip với thằng khác(khác MAC)
             // trường hợp này chỉ gặp 1 lần với mỗi 1 tk trùng ip
-            // khi tk trùng ip gửi gói tin đầu tiên==> nó bị block luôn. do trong block phải viết garp rồi nên cũng không cần sửa đích
+            // khi tk trùng ip gửi gói tin đầu tiên==> nó nên bị block luôn. do trong block phải viết garp rồi nên cũng không cần sửa đích
             // thực ra không giải quyết gì mấy vì vẫn phải garp cả cái ip đấy luôn==> thằng cũ cũng chết==> cảnh báo vẫn ngon nhất
             // gọi hàm block theo địa chỉ mac và ip
             my_etharp_add_entry(&sipaddr, &src_mac, BLOCKED);// thêm entry dạng blocked
@@ -597,7 +615,7 @@ u8_t my_etharp_add_entry(ip4_addr_t *ip, struct eth_addr *mac, my_nac_label stat
 int add_arp_request_count(int index)
 {
     int x = esp_timer_get_time();
-    if((x - my_arp_table[index].arp_timer) < 10000000 || (my_arp_table[index].arp_timer - x) > 10000000)// thay đổi đơn vị để thành 10 giây
+    if((x - my_arp_table[index].arp_timer) < ARP_SCAN_TIMER || (my_arp_table[index].arp_timer - x) > ARP_SCAN_TIMER)
     {
         my_arp_table[index].arp_request_count++;
     }
@@ -694,7 +712,7 @@ void my_nac_arp_unblock(esp_netif_t *eth_netif, struct eth_addr unblock_mac, ip4
         if(ip4_addr_cmp(&my_arp_table[i].ip, &unblock_ip) && (memcmp(my_arp_table[i].mac.addr, unblock_mac.addr, sizeof(struct eth_addr)) == 0))
         {
             // sửa label của thằng được unblock
-            my_arp_table[i].status = TRUSTED;
+            my_arp_table[i].status = UNTRUSTED;
         }
         else if((my_arp_table[i].status != BLOCKED) && (!ip4_addr_cmp(&my_arp_table[i].ip, &zero_ip)))
         {

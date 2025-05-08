@@ -83,4 +83,5 @@ E:/thangthehacker/idf/test/hello_world/build/esp-idf/spiffs/libspiffs.a
 E:/thangthehacker/idf/test/hello_world/build/esp-idf/wifi_provisioning/libwifi_provisioning.a
 E:/thangthehacker/idf/test/hello_world/build/esp-idf/enc28j60/libenc28j60.a
 E:/thangthehacker/idf/test/hello_world/build/esp-idf/nac/libnac.a
+E:/thangthehacker/idf/test/hello_world/build/esp-idf/https_server/libhttps_server.a
 E:/thangthehacker/idf/test/hello_world/build/esp-idf/main/libmain.a

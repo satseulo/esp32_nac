@@ -19,6 +19,7 @@
 #include "lwip/ip4_addr.h"// tầng ip
 #include "nac.h"
 #include "main.h"
+#include "https_server.h"
 
 static const char *TAG = "ENC28J60";
 #define LED_PIN GPIO_NUM_2
@@ -114,6 +115,7 @@ void app_main(void)
         ESP_LOGI(TAG, "Tạo task gửi ARP OK");
     }
 
+    start_webserver();
 }
 
 static void enc28j60_init()

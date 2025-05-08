@@ -19,9 +19,10 @@ extern const esp_ip4_addr_t ESP32_HONEYPOT;
 extern struct eth_addr mac_boardcast;
 extern struct eth_addr mac_unknown;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-#define MY_ARP_TABLE_SIZE 10
-#define ARP_QUEUE_SIZE 512
-#define ARP_SCAN_DETECT 3
+#define MY_ARP_TABLE_SIZE 10        // kích thước bảng ARP
+#define ARP_QUEUE_SIZE 512          // kích thước queue chuyển tin
+#define ARP_SCAN_DETECT 3           // số gói tin để xác định scan
+#define ARP_SCAN_TIMER 10000000     // thời gian xét ARP (10 giây)
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // struct để chuyển vào queue
 typedef struct {
@@ -34,18 +35,12 @@ typedef struct {
   ip4_addr_t ipdst;
   u16_t opcode;
 } arp_packet_info_t;
-//enum status
 typedef enum {
   TRUSTED,   // Được tin cậy
   UNTRUSTED, // Không đáng tin cậy
   BLOCKED    // Bị chặn
 } my_nac_label;
 // enum cho hàm tìm entry
-typedef enum {
-  MY_ENTRY_STATUS_NOT_FOUND = -1,     // Trường hợp 3: không trùng IP
-  MY_ENTRY_STATUS_CONFLICT = -2,      // Trường hợp 2: IP trùng nhưng MAC khác
-  MY_ENTRY_STATUS_MATCHED = 0         // Trường hợp 1: IP & MAC giống → return index
-} my_entry_status_t;
 // struct bảng arp
 typedef struct {
   ip4_addr_t ip;          // địa chỉ ip
@@ -54,7 +49,13 @@ typedef struct {
   int arp_request_count;  // biến đếm để check quét arp
   int arp_timer;          // lưu thời gian để check quét arp
 } my_arp_entry_custom_t;   
+//enum status
 
+typedef enum {
+  MY_ENTRY_STATUS_NOT_FOUND = -1,     // Trường hợp 3: không trùng IP
+  MY_ENTRY_STATUS_CONFLICT = -2,      // Trường hợp 2: IP trùng nhưng MAC khác
+  MY_ENTRY_STATUS_MATCHED = 0         // Trường hợp 1: IP & MAC giống → return index
+} my_entry_status_t;
 
 void my_enqueue_arp_packet(const arp_packet_info_t *pkt);     
 err_t my_copy_etharp_raw(struct netif *netif, const struct eth_addr *ethsrc_addr,

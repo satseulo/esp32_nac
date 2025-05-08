@@ -838,6 +838,13 @@ E:/thangthehacker/idf/test/hello_world/build/esp-idf/nac/CMakeFiles/list_install
 E:/thangthehacker/idf/test/hello_world/build/esp-idf/nac/CMakeFiles/install.dir
 E:/thangthehacker/idf/test/hello_world/build/esp-idf/nac/CMakeFiles/install/local.dir
 E:/thangthehacker/idf/test/hello_world/build/esp-idf/nac/CMakeFiles/install/strip.dir
+E:/thangthehacker/idf/test/hello_world/build/esp-idf/https_server/CMakeFiles/__idf_https_server.dir
+E:/thangthehacker/idf/test/hello_world/build/esp-idf/https_server/CMakeFiles/edit_cache.dir
+E:/thangthehacker/idf/test/hello_world/build/esp-idf/https_server/CMakeFiles/rebuild_cache.dir
+E:/thangthehacker/idf/test/hello_world/build/esp-idf/https_server/CMakeFiles/list_install_components.dir
+E:/thangthehacker/idf/test/hello_world/build/esp-idf/https_server/CMakeFiles/install.dir
+E:/thangthehacker/idf/test/hello_world/build/esp-idf/https_server/CMakeFiles/install/local.dir
+E:/thangthehacker/idf/test/hello_world/build/esp-idf/https_server/CMakeFiles/install/strip.dir
 E:/thangthehacker/idf/test/hello_world/build/esp-idf/main/CMakeFiles/__idf_main.dir
 E:/thangthehacker/idf/test/hello_world/build/esp-idf/main/CMakeFiles/edit_cache.dir
 E:/thangthehacker/idf/test/hello_world/build/esp-idf/main/CMakeFiles/rebuild_cache.dir
