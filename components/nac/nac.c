@@ -6,6 +6,7 @@
 #include "esp_netif.h"
 #include "esp_netif_net_stack.h"// có hàm void *esp_netif_get_netif_impl(esp_netif_t *esp_netif)
 #include "esp_heap_caps.h" // kiểm tra bộ nhớ
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 static const char *TAG = "NAC";
 extern esp_netif_t *eth_netif;                              // netif được tạo trong file main
@@ -29,49 +30,43 @@ void my_enqueue_arp_packet(const arp_packet_info_t *pkt)
     }
 }
 // hàm copy từ etharp, không khác gì hàm gốc. hàm gốc để static nhưng không muốn đổi gốc ==> lôi ra
-err_t
-my_copy_etharp_raw(struct netif *netif, const struct eth_addr *ethsrc_addr,     
-           const struct eth_addr *ethdst_addr,                                  
-           const struct eth_addr *hwsrc_addr, const ip4_addr_t *ipsrc_addr,     
-           const struct eth_addr *hwdst_addr, const ip4_addr_t *ipdst_addr,
-           const u16_t opcode)                                  
+err_t my_copy_etharp_raw(struct netif *netif, const struct eth_addr *src_mac, const struct eth_addr *dst_mac,
+    const struct eth_addr *arp_src_mac, const ip4_addr_t *arp_src_ip,
+    const struct eth_addr *arp_dst_mac, const ip4_addr_t *arp_dst_ip,
+    u16_t opcode)
 {
-    struct pbuf *p;
-    err_t result = ERR_OK;
-    struct etharp_hdr *hdr;
+struct pbuf *p;
+struct eth_hdr *ethhdr;
+struct etharp_hdr *arphdr;
+err_t ret;
 
-    LWIP_ASSERT("netif != NULL", netif != NULL);
+p = pbuf_alloc(PBUF_LINK, SIZEOF_ETHARP_HDR + SIZEOF_ETH_HDR, PBUF_RAM);
+if (p == NULL) return ERR_MEM;
 
-    /* allocate a pbuf for the outgoing ARP request packet */
-    p = pbuf_alloc(PBUF_LINK, SIZEOF_ETHARP_HDR, PBUF_RAM);
-    /* could allocate a pbuf for an ARP request? */
-    if (p == NULL) {
-    return ERR_MEM;
-    }
+ethhdr = (struct eth_hdr *)p->payload;
+SMEMCPY(&ethhdr->dest, dst_mac, ETH_HWADDR_LEN);
+SMEMCPY(&ethhdr->src,  src_mac, ETH_HWADDR_LEN);
+ethhdr->type = PP_HTONS(ETHTYPE_ARP);
 
-    hdr = (struct etharp_hdr *)p->payload;
-    hdr->opcode = lwip_htons(opcode);
+arphdr = (struct etharp_hdr *)((u8_t *)ethhdr + SIZEOF_ETH_HDR);
+arphdr->hwtype = PP_HTONS(HWTYPE_ETHERNET);
+arphdr->proto = PP_HTONS(ETHTYPE_IP);
+arphdr->hwlen = ETH_HWADDR_LEN;
+arphdr->protolen = sizeof(ip4_addr_t);
+arphdr->opcode = lwip_htons(opcode);
+SMEMCPY(&arphdr->shwaddr, arp_src_mac, ETH_HWADDR_LEN);
+SMEMCPY(&arphdr->dhwaddr, arp_dst_mac, ETH_HWADDR_LEN);
+IPADDR_WORDALIGNED_COPY_FROM_IP4_ADDR_T(&arphdr->sipaddr, arp_src_ip);
+IPADDR_WORDALIGNED_COPY_FROM_IP4_ADDR_T(&arphdr->dipaddr, arp_dst_ip);
 
-    /* Write the ARP MAC-Addresses */
-    SMEMCPY(&hdr->shwaddr, hwsrc_addr, ETH_HWADDR_LEN);
-    SMEMCPY(&hdr->dhwaddr, hwdst_addr, ETH_HWADDR_LEN);
-    /* Copy struct ip4_addr_wordaligned to aligned ip4_addr, to support compilers without
-    * structure packing. */
-    IPADDR_WORDALIGNED_COPY_FROM_IP4_ADDR_T(&hdr->sipaddr, ipsrc_addr);
-    IPADDR_WORDALIGNED_COPY_FROM_IP4_ADDR_T(&hdr->dipaddr, ipdst_addr);
+//xSemaphoreTake(enc28j60_tx_lock, portMAX_DELAY);
+ret = netif->linkoutput(netif, p);
+//xSemaphoreGive(enc28j60_tx_lock);
 
-    hdr->hwtype = PP_HTONS(LWIP_IANA_HWTYPE_ETHERNET);
-    hdr->proto = PP_HTONS(ETHTYPE_IP);
-    /* set hwlen and protolen */
-    hdr->hwlen = ETH_HWADDR_LEN;
-    hdr->protolen = sizeof(ip4_addr_t);
-    ethernet_output(netif, p, ethsrc_addr, ethdst_addr, ETHTYPE_ARP);
-
-    /* free ARP query packet */
-    pbuf_free(p);
-    /* could not allocate pbuf for ARP request */
-    return result;
+pbuf_free(p);
+return ret;
 }
+
 //đổi hook để thay vì xử lý theo thứ tự thì gọi my_ethernet_input trước
 void setup_ethernet_hook()
 {
@@ -95,10 +90,9 @@ err_t my_ethernet_input(struct pbuf *p, struct netif *netif)
     if (p->len <= SIZEOF_ETH_HDR) {
         return ethernet_input(p, netif);
     }
-
     ethhdr = (struct eth_hdr *)p->payload;
     type = ethhdr->type;
-
+    
     if (type == PP_HTONS(ETHTYPE_ARP)) {
         if (!(netif->flags & NETIF_FLAG_ETHARP)) {
             return ethernet_input(p, netif);  // không xử lý, cứ đẩy tiếp
@@ -121,50 +115,22 @@ err_t my_ethernet_input(struct pbuf *p, struct netif *netif)
         if (pbuf_remove_header(local_p, SIZEOF_ETH_HDR)) {
             pbuf_free(local_p);
         } else {
+            err_t err = ethernet_input(p, netif);
             my_etharp_input(local_p, netif);// xóa pbuf ở trong này rồi, không được gọi lại
+            return err;
         }
+        return ERR_OK;
     }
-
-    // Bản gốc vẫn giữ nguyên cho LWIP xử lý
-    err_t err = ethernet_input(p, netif);
-    if (err != ERR_OK) {
-        ESP_LOGE(TAG, "ethernet_input failed");
-    }
-
-    return err;
-}
-//kiểm tra nếu là arp thì gọi tiếp hàm my_etharp_input
-err_t my_check_if_arp(struct pbuf *p, struct netif *netif)
-{
-    struct eth_hdr *ethhdr;
-    u16_t type;
-
-    LWIP_ASSERT_CORE_LOCKED();
-
-    if (p->len <= SIZEOF_ETH_HDR) {
-        pbuf_free(p);
-        return ERR_OK;  // Không cần giải phóng ở đây nếu không có lỗi
-    }
-
-    ethhdr = (struct eth_hdr *)p->payload;
-    type = ethhdr->type;
-
-    if (type == PP_HTONS(ETHTYPE_ARP)) {
-        if (!(netif->flags & NETIF_FLAG_ETHARP)) {
-            pbuf_free(p);
-            return ERR_OK;  // Không cần giải phóng ở đây nếu không xử lý ARP
+    else
+    {        // Bản gốc vẫn giữ nguyên cho LWIP xử lý
+        //xSemaphoreTake(enc28j60_tx_lock, portMAX_DELAY);
+        err_t err = ethernet_input(p, netif);
+        //xSemaphoreGive(enc28j60_tx_lock);
+        if (err != ERR_OK) {
+            ESP_LOGE(TAG, "ethernet_input failed");
         }
-
-        if (pbuf_remove_header(p, SIZEOF_ETH_HDR)) {
-            pbuf_free(p);
-            return ERR_OK;  // Không cần giải phóng nếu lỗi khi bỏ qua header
-        }
-        my_etharp_input(p, netif);
+        return err;
     }
-    else{
-         pbuf_free(p);
-    }
-    return ERR_OK;
 }
 //hàm xử lý bản tin arp
 void my_etharp_input(struct pbuf *p, struct netif *netif)
@@ -213,7 +179,7 @@ void my_etharp_input(struct pbuf *p, struct netif *netif)
                 ESP_LOGI(TAG, "Nhận ARP request: từ blocked");  
                 //==> cần ngăn tk block biết trong mạng và ngăn thằng trong mạng biết thằng block
                 add_arp_request_count(index);                          // vẫn phải đếm arp request??
-
+                
                 ESP_LOGI(TAG, "send garp");                                // gửi GARP để chiếm ip của thằng blocked
                 arp_packet_info_t garp_pkt;                                
                 garp_pkt.netif = lwip_netif;                               // Gán con trỏ netif
@@ -225,7 +191,6 @@ void my_etharp_input(struct pbuf *p, struct netif *netif)
                 garp_pkt.ipdst = sipaddr;                                  // target_ip: trùng sender_ip ⇒ GARP
                 garp_pkt.opcode = ARP_REPLY;                               // không gửi garp request vì có thể tk kia phản hồi lại
                 my_enqueue_arp_packet(&garp_pkt);
-                    
                 // nếu nó hỏi đến thằng nào đó trong bảng
                 //==> trả lời thằng hỏi là địa chỉ đấy của mình==> thằng hỏi không biết địa chỉ trong mạng==> bảo vệ
                 for(int i = 0;i< MY_ARP_TABLE_SIZE;i++)
@@ -233,16 +198,16 @@ void my_etharp_input(struct pbuf *p, struct netif *netif)
                     if(ip4_addr_cmp(&my_arp_table[i].ip, &dipaddr))
                     {
                         ESP_LOGI(TAG, "send arp_reinforce");
-                            arp_packet_info_t arp_reinforce_pkt;
-                            arp_reinforce_pkt.netif = lwip_netif;                                // Gán con trỏ netif
-                            arp_reinforce_pkt.ethsrc = *(struct eth_addr *)lwip_netif->hwaddr;   // src_mac: ESP32 MAC
-                            arp_reinforce_pkt.ethdst = src_mac;                                  // dest_mac: MAC của BLOCKED
-                            arp_reinforce_pkt.hwsrc = *(struct eth_addr *)lwip_netif->hwaddr;    // sender_mac: ESP32 MAC 
-                            arp_reinforce_pkt.ipsrc = dipaddr;                                   // sender_ip: IP trong mạng (CẦN BẢO VỆ)
-                            arp_reinforce_pkt.hwdst = src_mac;                                   // target_mac: MAC của BLOCKED
-                            arp_reinforce_pkt.ipdst = sipaddr;                                   // target_ip: IP của BLOCKED
-                            arp_reinforce_pkt.opcode = ARP_REPLY;                                // opcode: ARP reply
-                            my_enqueue_arp_packet(&arp_reinforce_pkt);
+                        arp_packet_info_t arp_reinforce_pkt;
+                        arp_reinforce_pkt.netif = lwip_netif;                                // Gán con trỏ netif
+                        arp_reinforce_pkt.ethsrc = *(struct eth_addr *)lwip_netif->hwaddr;   // src_mac: ESP32 MAC
+                        arp_reinforce_pkt.ethdst = src_mac;                                  // dest_mac: MAC của BLOCKED
+                        arp_reinforce_pkt.hwsrc = *(struct eth_addr *)lwip_netif->hwaddr;    // sender_mac: ESP32 MAC 
+                        arp_reinforce_pkt.ipsrc = dipaddr;                                   // sender_ip: IP trong mạng (CẦN BẢO VỆ)
+                        arp_reinforce_pkt.hwdst = src_mac;                                   // target_mac: MAC của BLOCKED
+                        arp_reinforce_pkt.ipdst = sipaddr;                                   // target_ip: IP của BLOCKED
+                        arp_reinforce_pkt.opcode = ARP_REPLY;                                // opcode: ARP reply
+                        my_enqueue_arp_packet(&arp_reinforce_pkt);
                     }
                 }
             }
@@ -557,7 +522,7 @@ my_entry_status_t my_check_entry(const ip4_addr_t *ipaddr, const struct eth_addr
                 return MY_ENTRY_STATUS_MATCHED;
             } else {
                 // Trường hợp 2: IP trùng nhưng MAC khác
-                conflict_found = true;
+                //conflict_found = true;
             }
         }
     }
@@ -597,7 +562,7 @@ u8_t my_etharp_add_entry(ip4_addr_t *ip, struct eth_addr *mac, my_nac_label stat
             for (int j = 0; j < MY_ARP_TABLE_SIZE; j++) {
                 if (!ip4_addr_cmp(&my_arp_table[j].ip, &zero_ip)) {
                     ESP_LOGI(TAG, "IP: %s MAC: %02X:%02X:%02X:%02X:%02X:%02X Status: %s",
-                        ip4addr_ntoa(&my_arp_table[i].ip),
+                        ip4addr_ntoa(&my_arp_table[j].ip),
                         my_arp_table[j].mac.addr[0], my_arp_table[j].mac.addr[1], 
                         my_arp_table[j].mac.addr[2], my_arp_table[j].mac.addr[3], 
                         my_arp_table[j].mac.addr[4], my_arp_table[j].mac.addr[5],
@@ -630,6 +595,7 @@ int add_arp_request_count(int index)
 // quét arp, nếu nút không chống rung ==> có thể tràn queue
 void my_nac_arp_scan(esp_netif_t *eth_netif)
 {
+    ESP_LOGI(TAG, "vào hàm scan");
     struct netif *lwip_netif = esp_netif_get_netif_impl(eth_netif);
     ip4_addr_t ipser;
     ip4_addr_t current_ip = lwip_netif->ip_addr.u_addr.ip4;

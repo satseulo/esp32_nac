@@ -18,6 +18,7 @@ if("${CONFIG}" STREQUAL "" OR "${CONFIG}" STREQUAL "")
   "hello_world.map"
   "ldgen_libraries"
   "ldgen_libraries.in"
+  "login.html.S"
   "project_elf_src_esp32.c"
   "prvtkey.pem.S"
   "servercert.pem.S"

@@ -20,6 +20,9 @@
 #include "nac.h"
 #include "main.h"
 #include "https_server.h"
+#include "esp_eth_enc28j60.h"
+
+#define HTTP_QUEUE_SIZE 10
 
 static const char *TAG = "ENC28J60";
 #define LED_PIN GPIO_NUM_2
@@ -30,6 +33,8 @@ esp_netif_t *eth_netif = NULL;
 esp_eth_handle_t eth_handle = NULL;
 TaskHandle_t NAC_button_handle = NULL;
 QueueHandle_t my_button_Queue, arp_queue; 
+QueueHandle_t http_tx_queue = NULL;
+SemaphoreHandle_t enc28j60_tx_lock;
 
 bool led_state = false;
 const uint8_t ENC28J60_MAC_ADDR[6] = { 0x02, 0x00, 0x00, 0x12, 0x34, 0x56 };
@@ -106,12 +111,13 @@ void app_main(void)
     my_button_Queue = xQueueCreate(3, sizeof(gpio_num_t));  // gán handle vào giá trị 1 hàm==> thực chất là đã có handle rồi
     xTaskCreatePinnedToCore(NAC_button_task, "NAC", 4096, NULL, 10, &NAC_button_handle, 0);  // Core 0// bước tạo task để task kiểm tra queue
 
-    // Khởi tạo queue
+    enc28j60_tx_lock = xSemaphoreCreateMutex();
+    // Khởi tạo queue, task arp
     arp_queue = xQueueCreate(ARP_QUEUE_SIZE, sizeof(arp_packet_info_t));// queue của nac// arp_queue
     if (arp_queue == NULL) {
         ESP_LOGE(TAG, "Không thể tạo hàng đợi ARP");
     } else {
-        xTaskCreate(my_arp_sender_task, "arp_sender_task", 4096, NULL, 5, NULL);
+        xTaskCreate(my_arp_sender_task, "arp_sender_task", 4096, NULL, 2, NULL);
         ESP_LOGI(TAG, "Tạo task gửi ARP OK");
     }
 
@@ -171,12 +177,16 @@ static void enc28j60_init()
         eth_duplex_t duplex = ETH_DUPLEX_FULL;
         ESP_ERROR_CHECK(esp_eth_ioctl(eth_handle, ETH_CMD_S_DUPLEX_MODE, &duplex));
     }
+    ESP_LOGI(TAG, "ENC28J60 INT GPIO: %d", enc28j60_config.int_gpio_num);
 }
 
 static void eth_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
     switch (event_id) {// báo kết nối ethernet
         case ETHERNET_EVENT_CONNECTED:
             ESP_LOGI(TAG, "Ethernet Link Up");
+            eth_duplex_t duplex = ETH_DUPLEX_FULL;
+            esp_eth_ioctl(eth_handle, ETH_CMD_G_DUPLEX_MODE, &duplex);
+            ESP_LOGI(TAG, "working in full duplex");
             break;
         case ETHERNET_EVENT_DISCONNECTED:
             ESP_LOGI(TAG, "Ethernet Link Down");
@@ -197,6 +207,7 @@ static void got_ip_event_handler(void *arg, esp_event_base_t event_base, int32_t
     const esp_netif_ip_info_t *ip_info = &event->ip_info;
     ESP_LOGI(TAG, "Ethernet Got IP Address");// báo gắn được ip
     ESP_LOGI(TAG, "ETHIP:" IPSTR, IP2STR(&ip_info->ip));
+    my_nac_arp_scan(eth_netif);
 }
 
 static void my_arp_sender_task(void *arg)
@@ -204,7 +215,26 @@ static void my_arp_sender_task(void *arg)
     arp_packet_info_t pkt;
 
     while (1) {
+        // Đọc gói tin từ hàng đợi
         if (xQueueReceive(arp_queue, &pkt, portMAX_DELAY) == pdTRUE) {
+            esp_netif_t *esp_netif = (esp_netif_t *)pkt.netif;  // Chuyển đổi đúng kiểu
+
+            esp_netif_iodriver_handle eth_handle = NULL;  // Khai báo và khởi tạo driver handle
+            esp_eth_mac_t *mac = NULL;
+
+            // Lấy driver Ethernet từ netif
+            eth_handle = esp_netif_get_io_driver(esp_netif);
+            if (eth_handle != NULL) {
+                // Lấy địa chỉ MAC của thiết bị Ethernet
+                if (esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, &mac) == ESP_OK && mac) {
+
+                    // Đợi nếu đang truyền Ethernet
+                    while (enc28j60_is_transmitting(mac)) {
+                        vTaskDelay(pdMS_TO_TICKS(1));  // đợi 1ms trước khi thử lại
+                    }
+                }
+            }
+            // Gọi hàm sao chép ARP raw và xử lý
             my_copy_etharp_raw(
                 pkt.netif,
                 &pkt.ethsrc,
@@ -215,7 +245,7 @@ static void my_arp_sender_task(void *arg)
                 &pkt.ipdst,
                 pkt.opcode
             );
-            vTaskDelay(pdMS_TO_TICKS(10));  // tránh nghẽn ENC28J60
+            vTaskDelay(pdMS_TO_TICKS(1));  // đợi 1ms trước khi thử lại
         }
     }
 }
@@ -226,13 +256,18 @@ void NAC_button_task(void *arg)
     while(1){
         if(xQueueReceive(my_button_Queue, &gpio_num, portMAX_DELAY)){
             if (gpio_num == BLOCK_BUTTON){
+                //xSemaphoreTake(enc28j60_tx_lock, portMAX_DELAY);
                 my_nac_arp_scan(eth_netif);
+                //xSemaphoreGive(enc28j60_tx_lock);
             }
             else if(gpio_num == SCAN_BUTTON){
+                //xSemaphoreTake(enc28j60_tx_lock, portMAX_DELAY);
                 my_arp_table_print();
+                //xSemaphoreGive(enc28j60_tx_lock);
             }
         }
         gpio_set_level(LED_PIN, led_state);
     }
 }
  
+

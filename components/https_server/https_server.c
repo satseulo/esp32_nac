@@ -11,40 +11,67 @@
 #include <esp_https_server.h>
 #include "esp_tls.h"
 #include "sdkconfig.h"
-
+#include "https_server.h"
 /* A simple example that demonstrates how to create GET and POST
  * handlers and start an HTTPS server.
 */
-
+extern SemaphoreHandle_t enc28j60_tx_lock;
 static const char *TAG = "example";
 
-/* Event handler for catching system events */
-static void event_handler(void* arg, esp_event_base_t event_base,
-                          int32_t event_id, void* event_data)
-{
-    if (event_base == ESP_HTTPS_SERVER_EVENT) {
-        if (event_id == HTTPS_SERVER_EVENT_ERROR) {
-            esp_https_server_last_error_t *last_error = (esp_tls_last_error_t *) event_data;
-            ESP_LOGE(TAG, "Error event triggered: last_error = %s, last_tls_err = %d, tls_flag = %d", esp_err_to_name(last_error->last_error), last_error->esp_tls_error_code, last_error->esp_tls_flags);
+extern QueueHandle_t http_tx_queue;  // Đảm bảo bạn đã tạo queue này ở nơi khác
+
+extern const uint8_t login_html_start[] asm("_binary_login_html_start");
+extern const uint8_t login_html_end[]   asm("_binary_login_html_end");
+
+esp_err_t login_get_handler(httpd_req_t *req) {
+    size_t len = login_html_end - login_html_start;
+
+    xSemaphoreTake(enc28j60_tx_lock, portMAX_DELAY);
+    esp_err_t err = httpd_resp_send(req, (const char *)login_html_start, len);
+    xSemaphoreGive(enc28j60_tx_lock);
+
+    if (err != ESP_OK) {
+        ESP_LOGE("HTTP", "Gửi login_get_handler thất bại: %s", esp_err_to_name(err));
+    }
+
+    return err;
+}
+
+esp_err_t login_post_handler(httpd_req_t *req) {
+    char buf[100];
+    int len = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (len <= 0) return ESP_FAIL;
+    buf[len] = '\0';
+
+    char *user = strstr(buf, "username=");
+    char *pass = strstr(buf, "password=");
+
+    const char *response_text = "Malformed login request";
+
+    if (user && pass) {
+        user += strlen("username=");
+        pass += strlen("password=");
+
+        char *pass_end = strchr(pass, '&');
+        if (pass_end) *pass_end = '\0';
+
+        if (strncmp(user, "admin", 5) == 0 && strncmp(pass, "1234", 4) == 0) {
+            response_text = "Login successful";
+        } else {
+            response_text = "Invalid credentials";
         }
     }
+
+    xSemaphoreTake(enc28j60_tx_lock, portMAX_DELAY);
+    esp_err_t err = httpd_resp_sendstr(req, response_text);
+    xSemaphoreGive(enc28j60_tx_lock);
+
+    if (err != ESP_OK) {
+        ESP_LOGE("HTTP", "Gửi login_post_handler thất bại: %s", esp_err_to_name(err));
+    }
+
+    return err;
 }
-
-/* An HTTP GET handler */
-static esp_err_t root_get_handler(httpd_req_t *req)
-{
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req, "<h1>Hello Secure World!</h1>", HTTPD_RESP_USE_STRLEN);
-
-    return ESP_OK;
-}
-
-
-static const httpd_uri_t root = {
-    .uri       = "/",
-    .method    = HTTP_GET,
-    .handler   = root_get_handler
-};
 
 httpd_handle_t start_webserver(void)
 {
@@ -53,57 +80,38 @@ httpd_handle_t start_webserver(void)
     // Start the httpd server
     ESP_LOGI(TAG, "Starting server");
 
-    httpd_ssl_config_t conf = HTTPD_SSL_CONFIG_DEFAULT();
-    extern const unsigned char servercert_start[] asm("_binary_servercert_pem_start");
-    extern const unsigned char servercert_end[]   asm("_binary_servercert_pem_end");
-    conf.servercert = servercert_start;
-    conf.servercert_len = servercert_end - servercert_start;
+    // httpd_ssl_config_t conf = HTTPD_SSL_CONFIG_DEFAULT();
+    // extern const unsigned char servercert_start[] asm("_binary_servercert_pem_start");
+    // extern const unsigned char servercert_end[]   asm("_binary_servercert_pem_end");
+    // conf.servercert = servercert_start;
+    // conf.servercert_len = servercert_end - servercert_start;
 
-    extern const unsigned char prvtkey_pem_start[] asm("_binary_prvtkey_pem_start");
-    extern const unsigned char prvtkey_pem_end[]   asm("_binary_prvtkey_pem_end");
-    conf.prvtkey_pem = prvtkey_pem_start;
-    conf.prvtkey_len = prvtkey_pem_end - prvtkey_pem_start;
-    // httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    // httpd_start(&server, &config);
-#if CONFIG_EXAMPLE_ENABLE_HTTPS_USER_CALLBACK
-    conf.user_cb = https_server_user_callback;
-#endif
-    esp_err_t ret = httpd_ssl_start(&server, &conf);
+    // extern const unsigned char prvtkey_pem_start[] asm("_binary_prvtkey_pem_start");
+    // extern const unsigned char prvtkey_pem_end[]   asm("_binary_prvtkey_pem_end");
+    // conf.prvtkey_pem = prvtkey_pem_start;
+    // conf.prvtkey_len = prvtkey_pem_end - prvtkey_pem_start;
+    //esp_err_t ret = httpd_ssl_start(&server, &conf);
+    httpd_config_t conf = HTTPD_DEFAULT_CONFIG();
+    esp_err_t ret = httpd_start(&server, &conf);
+
     if (ESP_OK != ret) {
         ESP_LOGI(TAG, "Error starting server!");
         return NULL;
     }
+    httpd_uri_t login_get_uri = {
+        .uri = "/",
+        .method = HTTP_GET,
+        .handler = login_get_handler
+    };
+    httpd_register_uri_handler(server, &login_get_uri);
+
+    httpd_uri_t login_post_uri = {
+        .uri = "/login",
+        .method = HTTP_POST,
+        .handler = login_post_handler
+    };
+    httpd_register_uri_handler(server, &login_post_uri);
 
     // Set URI handlers
-    ESP_LOGI(TAG, "Registering URI handlers");
-    httpd_register_uri_handler(server, &root);
     return server;
-}
-
-static esp_err_t stop_webserver(httpd_handle_t server)
-{
-    // Stop the httpd server
-    return httpd_ssl_stop(server);
-}
-
-static void disconnect_handler(void* arg, esp_event_base_t event_base,
-                               int32_t event_id, void* event_data)
-{
-    httpd_handle_t* server = (httpd_handle_t*) arg;
-    if (*server) {
-        if (stop_webserver(*server) == ESP_OK) {
-            *server = NULL;
-        } else {
-            ESP_LOGE(TAG, "Failed to stop https server");
-        }
-    }
-}
-
-static void connect_handler(void* arg, esp_event_base_t event_base,
-                            int32_t event_id, void* event_data)
-{
-    httpd_handle_t* server = (httpd_handle_t*) arg;
-    if (*server == NULL) {
-        *server = start_webserver();
-    }
 }

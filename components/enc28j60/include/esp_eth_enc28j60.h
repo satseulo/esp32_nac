@@ -100,7 +100,7 @@ esp_eth_phy_t *esp_eth_phy_new_enc28j60(const eth_phy_config_t *config);
  *           - returns silicon revision ID read during initialization
  */
 eth_enc28j60_rev_t emac_enc28j60_get_chip_info(esp_eth_mac_t *mac);
-
+bool enc28j60_is_transmitting(esp_eth_mac_t *mac);
 #ifdef __cplusplus
 }
 #endif

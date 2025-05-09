@@ -11,6 +11,8 @@
 #include "esp_log.h"
 #include "netif/ethernet.h" // Thêm thư viện chứa ethernet_input()
 #define LWIP_IANA_HWTYPE_ETHERNET 1
+#define HWTYPE_ETHERNET 1
+
 extern const uint8_t ENC28J60_MAC_ADDR[6];
 extern const esp_ip4_addr_t ESP32_IP;
 extern const esp_ip4_addr_t ESP32_GATEWAY;
@@ -18,11 +20,14 @@ extern const esp_ip4_addr_t ESP32_NETMASK;
 extern const esp_ip4_addr_t ESP32_HONEYPOT;
 extern struct eth_addr mac_boardcast;
 extern struct eth_addr mac_unknown;
+extern SemaphoreHandle_t enc28j60_tx_lock;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 #define MY_ARP_TABLE_SIZE 10        // kích thước bảng ARP
 #define ARP_QUEUE_SIZE 512          // kích thước queue chuyển tin
 #define ARP_SCAN_DETECT 3           // số gói tin để xác định scan
 #define ARP_SCAN_TIMER 10000000     // thời gian xét ARP (10 giây)
+#define ENC28J60_MAX_RETRY     3
+#define ENC28J60_RETRY_DELAY   10  // ms
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // struct để chuyển vào queue
 typedef struct {
@@ -64,8 +69,7 @@ err_t my_copy_etharp_raw(struct netif *netif, const struct eth_addr *ethsrc_addr
   const ip4_addr_t *ipdst_addr, const u16_t opcode);
 
 void setup_ethernet_hook();                                    
-err_t my_ethernet_input(struct pbuf *p, struct netif *netif);  
-err_t my_check_if_arp(struct pbuf *p, struct netif *netif);    
+err_t my_ethernet_input(struct pbuf *p, struct netif *netif);     
 void my_etharp_input(struct pbuf *p, struct netif *netif);     
 my_entry_status_t my_check_entry(const ip4_addr_t *ipaddr, const struct eth_addr *mac, int *matched_index);
 u8_t my_etharp_add_entry(ip4_addr_t *ip, struct eth_addr *mac, my_nac_label status);

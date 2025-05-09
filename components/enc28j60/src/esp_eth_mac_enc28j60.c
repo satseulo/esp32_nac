@@ -1127,3 +1127,13 @@ err:
     }
     return ret;
 }
+
+bool enc28j60_is_transmitting(esp_eth_mac_t *mac)
+{
+    emac_enc28j60_t *emac = __containerof(mac, emac_enc28j60_t, parent);
+    uint8_t econ1 = 0;
+    if (enc28j60_register_read(emac, ENC28J60_ECON1, &econ1) != ESP_OK) {
+        return true; // Giả định đang bận nếu không đọc được
+    }
+    return econ1 & ECON1_TXRTS;
+}

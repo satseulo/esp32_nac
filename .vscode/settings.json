@@ -6,7 +6,9 @@
         "netfwd": "cpp",
         "cstdint": "cpp",
         "nac.h": "c",
-        "compare": "c"
+        "compare": "c",
+        "esp_eth_enc28j60.h": "c",
+        "https_server.h": "c"
     },
     "idf.portWin": "COM3",
     "idf.flashType": "UART"
